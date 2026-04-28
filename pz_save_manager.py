@@ -250,10 +250,7 @@ def unique_sidecar_path(path: Path, marker: str) -> Path:
 
     return candidate
 
-
 def run_robocopy(source: Path, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-
     command = [
         "robocopy",
         str(source),
@@ -285,11 +282,35 @@ def run_robocopy(source: Path, destination: Path) -> None:
 
 
 def copy_tree_fast(source: Path, destination: Path) -> None:
+    if destination.exists():
+        raise RuntimeError(f"Destination already exists: {destination}")
+
     if os.name == "nt" and shutil.which("robocopy"):
+        destination.mkdir(parents=True, exist_ok=True)
         run_robocopy(source, destination)
         return
 
     shutil.copytree(source, destination, copy_function=shutil.copy2)
+
+
+def restore_folder_fast(source: Path, destination: Path) -> None:
+    if destination.exists():
+        raise RuntimeError(f"Restore target already exists: {destination}")
+
+    if os.name == "nt" and shutil.which("robocopy"):
+        destination.mkdir(parents=True, exist_ok=True)
+        run_robocopy(source, destination)
+        return
+
+    shutil.copytree(source, destination, copy_function=shutil.copy2)
+
+
+# def copy_tree_fast(source: Path, destination: Path) -> None:
+#     if os.name == "nt" and shutil.which("robocopy"):
+#         run_robocopy(source, destination)
+#         return
+
+#     shutil.copytree(source, destination, copy_function=shutil.copy2)
 
 
 def zip_store_fast(source: Path, destination_zip: Path) -> None:
@@ -781,7 +802,6 @@ class BackupWorker(QThread):
 
             self.failed.emit(str(exc))
 
-
 class RestoreWorker(QThread):
     log = pyqtSignal(str)
     done = pyqtSignal(str)
@@ -807,11 +827,11 @@ class RestoreWorker(QThread):
                 destination.rename(moved_existing)
                 self.log.emit(f"Moved current save aside: {moved_existing}")
 
-            if self.backup.kind == "zip":
-                extract_zip_save_contents(self.backup.path, destination)
+            if self.backup.kind == "folder":
+                restore_folder_fast(self.backup.path, destination)
 
-            elif self.backup.kind == "folder":
-                copy_tree_fast(self.backup.path, destination)
+            elif self.backup.kind == "zip":
+                extract_zip_save_contents(self.backup.path, destination)
 
             elif self.backup.kind == "7z":
                 extract_7z_save_contents(self.backup.path, destination)
@@ -870,8 +890,9 @@ class MainWindow(QMainWindow):
         self.backup_root = QLineEdit(str(DEFAULT_BACKUP_ROOT))
 
         self.method = QComboBox()
-        self.method.addItem("Fast zip, no compression", "zip")
         self.method.addItem("Fast folder copy", "folder")
+        self.method.addItem("Fast zip, no compression", "zip")
+        
         self.method.addItem("7-Zip full archive", "7z")
         self.method.addItem("Fast WIM full backup", "wim")
 
@@ -1097,6 +1118,7 @@ class MainWindow(QMainWindow):
         self.worker.done.connect(self.backup_done)
         self.worker.failed.connect(self.backup_failed)
         self.worker.start()
+
 
     def restore_selected_backup(self) -> None:
         if self.worker and self.worker.isRunning():
